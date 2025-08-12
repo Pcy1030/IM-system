@@ -35,7 +35,7 @@
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/你的用户名/IM-system.git
+git clone https://github.com/Pcy1030/IM-system.git
 cd IM-system
 ```
 
