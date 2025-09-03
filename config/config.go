@@ -10,11 +10,12 @@ import (
 
 // Config 应用配置结构体
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	JWT      JWTConfig      `yaml:"jwt"`
-	Log      LogConfig      `yaml:"log"`
-	Redis    RedisConfig    `yaml:"redis"`
+	Server    ServerConfig    `yaml:"server"`
+	Database  DatabaseConfig  `yaml:"database"`
+	JWT       JWTConfig       `yaml:"jwt"`
+	Log       LogConfig       `yaml:"log"`
+	Redis     RedisConfig     `yaml:"redis"`
+	WebSocket WebSocketConfig `yaml:"websocket"`
 }
 
 // ServerConfig 服务器配置
@@ -61,6 +62,12 @@ type RedisConfig struct {
 	Port     int    `yaml:"port"`     // Redis端口
 	Password string `yaml:"password"` // Redis密码
 	DB       int    `yaml:"db"`       // Redis数据库编号
+}
+
+// WebSocketConfig WebSocket 心跳配置
+type WebSocketConfig struct {
+	PingInterval time.Duration `yaml:"pingInterval"` // 发送ping的间隔
+	ReadTimeout  time.Duration `yaml:"readTimeout"`  // 读超时时间（未收到任何数据则断开）
 }
 
 // LoadConfig 加载配置（混合方式：YAML文件 + 环境变量）
@@ -176,6 +183,14 @@ func overrideWithEnvVars(config *Config) {
 	if db := getEnvInt("REDIS_DB", -1); db >= 0 {
 		config.Redis.DB = db
 	}
+
+	// WebSocket配置
+	if d := getEnvDuration("WS_PING_INTERVAL", 0); d > 0 {
+		config.WebSocket.PingInterval = d
+	}
+	if d := getEnvDuration("WS_READ_TIMEOUT", 0); d > 0 {
+		config.WebSocket.ReadTimeout = d
+	}
 }
 
 // getDefaultConfig 获取默认配置
@@ -216,6 +231,10 @@ func getDefaultConfig() *Config {
 			Port:     6379,
 			Password: "",
 			DB:       0,
+		},
+		WebSocket: WebSocketConfig{
+			PingInterval: 30 * time.Second,
+			ReadTimeout:  90 * time.Second,
 		},
 	}
 }

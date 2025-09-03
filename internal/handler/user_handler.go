@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"im-system/internal/service"
 	"im-system/pkg/jwt"
 	"im-system/pkg/response"
@@ -104,4 +105,24 @@ func (h *UserHandler) TestAuth(c *gin.Context) {
 		Username:  username,
 		TokenInfo: tokenInfo,
 	})
+}
+
+// Logout 用户登出（需要JWT认证）：仅更新在线状态为offline
+func (h *UserHandler) Logout(c *gin.Context) {
+	userIDStr := jwt.GetUserID(c)
+	if userIDStr == "" {
+		response.Unauthorized(c, "用户未认证")
+		return
+	}
+	// 将字符串ID转换为uint
+	var uid uint
+	if _, err := fmt.Sscanf(userIDStr, "%d", &uid); err != nil {
+		response.BadRequest(c, "invalid user id")
+		return
+	}
+	if err := h.service.Logout(uid); err != nil {
+		response.InternalError(c, "登出失败")
+		return
+	}
+	response.SuccessWithMessage(c, "已离线", nil)
 }

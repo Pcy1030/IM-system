@@ -69,6 +69,9 @@ func (s *UserService) Login(identifier, plainPassword string) (*model.User, stri
 	if !password.Verify(plainPassword, u.PasswordHash) {
 		return nil, "", errors.New("invalid credentials")
 	}
+	// 登录成功：更新状态为 online，并刷新最近在线时间
+	_ = s.repo.UpdateStatus(u.ID, "online")
+
 	token, err := s.jwtService.GenerateToken(
 		fmt.Sprintf("%d", u.ID),
 		map[string]interface{}{"username": u.Username},
@@ -77,4 +80,9 @@ func (s *UserService) Login(identifier, plainPassword string) (*model.User, stri
 		return nil, "", err
 	}
 	return u, token, nil
+}
+
+// Logout 登出：将状态置为 offline
+func (s *UserService) Logout(userID uint) error {
+	return s.repo.UpdateStatus(userID, "offline")
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -45,7 +46,13 @@ func WsHandler(c *gin.Context) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	// 回显子协议，避免客户端提示 "Server sent no subprotocol"
+	respHeader := http.Header{}
+	if protocol := c.GetHeader("Sec-WebSocket-Protocol"); protocol != "" {
+		respHeader.Set("Sec-WebSocket-Protocol", protocol)
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, respHeader)
 	if err != nil {
 		return
 	}
@@ -56,12 +63,41 @@ func WsHandler(c *gin.Context) {
 		Send:   make(chan []byte, 256),
 	}
 	GetManager().AddClient(uint(userID), client)
-	defer GetManager().RemoveClient(uint(userID))
+	// WebSocket连接建立后，设置用户状态为 online
+	if db := dbPkg.GetDB(); db != nil {
+		userRepo := repository.NewUserRepository()
+		_ = userRepo.UpdateStatus(uint(userID), "online")
+	}
+	defer func() {
+		GetManager().RemoveClient(uint(userID))
+		// 连接关闭后，设置用户状态为 offline
+		if db := dbPkg.GetDB(); db != nil {
+			userRepo := repository.NewUserRepository()
+			_ = userRepo.UpdateStatus(uint(userID), "offline")
+		}
+	}()
 
-	// 启动写协程
+	// 从上下文读取心跳配置
+	wsCfg := c.MustGet("ws_config").(config.WebSocketConfig)
+
+	// 启动写协程 + 定时发送ping心跳
+	done := make(chan struct{})
 	go func() {
-		for msg := range client.Send {
-			_ = conn.WriteMessage(websocket.TextMessage, msg)
+		ticker := time.NewTicker(wsCfg.PingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case msg, ok := <-client.Send:
+				if !ok {
+					return
+				}
+				_ = conn.WriteMessage(websocket.TextMessage, msg)
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second)); err != nil {
+					close(done)
+					return
+				}
+			}
 		}
 	}()
 
@@ -85,12 +121,53 @@ func WsHandler(c *gin.Context) {
 		}
 	}
 
-	// 读协程（可扩展为接收心跳/客户端消息）
+	// 读协程（接收心跳/客户端消息）。若超时未收到任何读事件则断开
+	_ = conn.SetReadDeadline(time.Now().Add(wsCfg.ReadTimeout))
+	conn.SetPongHandler(func(appData string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsCfg.ReadTimeout))
+	})
 	for {
-		_, _, err := conn.ReadMessage()
+		_, payload, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
-		// 可处理心跳或客户端主动发消息
+		_ = conn.SetReadDeadline(time.Now().Add(wsCfg.ReadTimeout))
+		var msg map[string]interface{}
+		if err := json.Unmarshal(payload, &msg); err == nil {
+			if t, ok := msg["type"].(string); ok {
+				switch t {
+				case "ack_read":
+					var msgID uint64
+					switch v := msg["msg_id"].(type) {
+					case float64:
+						msgID = uint64(v)
+					case string:
+						if id, e := strconv.ParseUint(v, 10, 64); e == nil {
+							msgID = id
+						}
+					}
+					if msgID > 0 {
+						if db := dbPkg.GetDB(); db != nil {
+							repo := repository.NewMessageRepository(db)
+							if m, e := repo.GetByID(uint(msgID)); e == nil {
+								if m.ReceiverID == uint(userID) {
+									_ = repo.MarkAsRead(uint(msgID))
+								}
+							}
+						}
+					}
+				case "heartbeat":
+					if db := dbPkg.GetDB(); db != nil {
+						userRepo := repository.NewUserRepository()
+						_ = userRepo.UpdateStatus(uint(userID), "online")
+					}
+				}
+			}
+		}
+	}
+	select {
+	case <-done:
+	default:
+		close(done)
 	}
 }

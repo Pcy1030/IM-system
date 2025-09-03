@@ -79,6 +79,7 @@ func main() {
 	// 注入jwt_config到Gin context，供WebSocket使用
 	router.Use(func(c *gin.Context) {
 		c.Set("jwt_config", cfg.JWT)
+		c.Set("ws_config", cfg.WebSocket)
 		c.Next()
 	})
 
@@ -104,6 +105,7 @@ func main() {
 			{
 				authUsers.GET("/profile", userHandler.GetProfile)
 				authUsers.GET("/test-auth", userHandler.TestAuth)
+				authUsers.POST("/logout", userHandler.Logout)
 			}
 		}
 
