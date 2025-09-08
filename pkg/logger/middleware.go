@@ -44,17 +44,17 @@ func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 开始时间
 		start := time.Now()
-		
+
 		// 处理请求
 		c.Next()
-		
+
 		// 结束时间
 		end := time.Now()
 		latency := end.Sub(start)
-		
+
 		// 获取状态码
 		status := c.Writer.Status()
-		
+
 		// 记录请求日志
 		logger := WithFields(map[string]interface{}{
 			"method":     c.Request.Method,
@@ -64,7 +64,7 @@ func RequestLogger() gin.HandlerFunc {
 			"latency":    latency.String(),
 			"user_agent": c.Request.UserAgent(),
 		})
-		
+
 		// 根据状态码选择日志级别
 		switch {
 		case status >= 500:

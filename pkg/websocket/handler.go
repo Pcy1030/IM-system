@@ -6,6 +6,7 @@ import (
 	"im-system/internal/repository"
 	dbPkg "im-system/pkg/db"
 	"im-system/pkg/jwt"
+	"im-system/pkg/redis"
 	"im-system/pkg/response"
 	"net/http"
 	"strconv"
@@ -63,18 +64,30 @@ func WsHandler(c *gin.Context) {
 		Send:   make(chan []byte, 256),
 	}
 	GetManager().AddClient(uint(userID), client)
+
 	// WebSocket连接建立后，设置用户状态为 online
+	// 1. 更新数据库状态
 	if db := dbPkg.GetDB(); db != nil {
 		userRepo := repository.NewUserRepository()
 		_ = userRepo.UpdateStatus(uint(userID), "online")
 	}
+
+	// 2. 更新Redis在线状态
+	username := claims.Data["username"].(string)
+	_ = redis.SetUserPresence(uint(userID), username, "online")
+
 	defer func() {
 		GetManager().RemoveClient(uint(userID))
+
 		// 连接关闭后，设置用户状态为 offline
+		// 1. 更新数据库状态
 		if db := dbPkg.GetDB(); db != nil {
 			userRepo := repository.NewUserRepository()
 			_ = userRepo.UpdateStatus(uint(userID), "offline")
 		}
+
+		// 2. 更新Redis在线状态
+		_ = redis.SetUserPresence(uint(userID), username, "offline")
 	}()
 
 	// 从上下文读取心跳配置
@@ -157,6 +170,8 @@ func WsHandler(c *gin.Context) {
 						}
 					}
 				case "heartbeat":
+					// 刷新用户在线状态（延长TTL）
+					_ = redis.RefreshUserPresence(uint(userID))
 					if db := dbPkg.GetDB(); db != nil {
 						userRepo := repository.NewUserRepository()
 						_ = userRepo.UpdateStatus(uint(userID), "online")

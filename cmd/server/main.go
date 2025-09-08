@@ -16,6 +16,7 @@ import (
 	dbPkg "im-system/pkg/db"
 	"im-system/pkg/jwt"
 	"im-system/pkg/logger"
+	"im-system/pkg/redis"
 	"im-system/pkg/response"
 	"im-system/pkg/websocket"
 
@@ -42,7 +43,8 @@ func main() {
 		zap.String("log_level", cfg.Log.Level),
 	)
 
-	// 3. 初始化数据库连接
+	// 3. 初始化
+	// 3.1 初始化数据库连接
 	if _, err := dbPkg.InitDB(cfg.Database); err != nil {
 		log.Fatal("数据库连接失败", zap.Error(err))
 	}
@@ -53,13 +55,31 @@ func main() {
 	}()
 	log.Info("数据库连接成功")
 
-	// 3.1 自动迁移表结构
+	// 3.2 初始化Redis连接
+	if err := redis.InitRedis(cfg.Redis); err != nil {
+		log.Fatal("Redis连接失败", zap.Error(err))
+	}
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("关闭Redis连接失败", zap.Error(err))
+		}
+	}()
+	log.Info("Redis连接成功")
+
+	// 3.3 初始化Redis缓存配置
+	redis.SetCacheConfig(cfg.Cache.MessageTTL, cfg.Cache.MaxCachedMessages, cfg.Cache.MaxCachedConversations)
+	log.Info("Redis缓存配置初始化完成",
+		zap.Duration("messageTTL", cfg.Cache.MessageTTL),
+		zap.Int("maxCachedMessages", cfg.Cache.MaxCachedMessages),
+		zap.Int("maxCachedConversations", cfg.Cache.MaxCachedConversations))
+
+	// 3.4 自动迁移表结构
 	if err := dbPkg.AutoMigrate(&model.User{}, &model.Message{}, &model.Friendship{}); err != nil {
 		log.Fatal("自动迁移失败", zap.Error(err))
 	}
 	log.Info("自动迁移完成")
 
-	// 3.2 初始化业务服务
+	// 3.5 初始化业务服务
 	jwtSvc := jwt.NewJWTService(cfg.JWT)
 	userRepo := repository.NewUserRepository()
 	messageRepo := repository.NewMessageRepository(dbPkg.GetDB())
@@ -104,8 +124,10 @@ func main() {
 			authUsers.Use(jwtSvc.AuthMiddleware()) // 应用JWT中间件
 			{
 				authUsers.GET("/profile", userHandler.GetProfile)
-				authUsers.GET("/test-auth", userHandler.TestAuth)
+				authUsers.GET("/test-auth", userHandler.TestAuth) //这个接口可以用来测试JWT认证是否成功
 				authUsers.POST("/logout", userHandler.Logout)
+				authUsers.GET("/online", userHandler.GetOnlineUsers)           //获取在线用户列表
+				authUsers.GET("/online/:user_id", userHandler.CheckUserOnline) //检查指定用户是否在线
 			}
 		}
 
@@ -113,12 +135,18 @@ func main() {
 		messages := v1.Group("/messages")
 		messages.Use(jwtSvc.AuthMiddleware())
 		{
-			messages.POST("/send", messageHandler.SendMessage)                    // 发送消息
-			messages.GET("/conversations", messageHandler.GetRecentConversations) // 获取最近对话
-			messages.GET("/unread", messageHandler.GetUnreadMessages)             // 获取未读消息
-			messages.GET("/unread/count", messageHandler.GetUnreadCount)          // 获取未读消息数量
-			messages.PUT("/:message_id/read", messageHandler.MarkAsRead)          // 标记消息为已读
-			messages.DELETE("/:message_id", messageHandler.DeleteMessage)         // 删除消息
+			messages.POST("/send", messageHandler.SendMessage)                                  // 发送消息
+			messages.GET("/conversations", messageHandler.GetRecentConversations)               // 获取最近对话
+			messages.GET("/conversation-list", messageHandler.GetConversationList)              // 获取对话列表（带缓存）
+			messages.GET("/unread", messageHandler.GetUnreadMessages)                           // 获取未读消息
+			messages.GET("/unread/count", messageHandler.GetUnreadCount)                        // 获取未读消息数量
+			messages.PUT("/:message_id/read", messageHandler.MarkAsRead)                        // 标记消息为已读
+			messages.PUT("/conversations/:user_id/read", messageHandler.MarkConversationAsRead) // 标记对话为已读
+			messages.PUT("/read-all", messageHandler.MarkAllAsRead)                             // 标记所有消息为已读
+			messages.GET("/offline", messageHandler.GetOfflineMessages)                         // 获取离线消息
+			messages.GET("/offline/count", messageHandler.GetOfflineMessageCount)               // 获取离线消息数量
+			messages.DELETE("/offline", messageHandler.ClearOfflineMessages)                    // 清空离线消息
+			messages.DELETE("/:message_id", messageHandler.DeleteMessage)                       // 删除消息
 		}
 
 		// 私聊消息历史（需要认证）
@@ -174,12 +202,28 @@ func setupBasicRoutes(router *gin.Engine) {
 	// 完整url为：http://localhost:8080/health
 	router.GET("/health", func(c *gin.Context) {
 		status := "ok"
+		checks := make(map[string]string)
+
+		// 检查数据库
 		if err := dbPkg.HealthCheck(); err != nil {
-			status = "db-down"
+			checks["database"] = "down"
+			status = "degraded"
+		} else {
+			checks["database"] = "ok"
 		}
+
+		// 检查Redis
+		if err := redis.HealthCheck(); err != nil {
+			checks["redis"] = "down"
+			status = "degraded"
+		} else {
+			checks["redis"] = "ok"
+		}
+
 		response.Success(c, gin.H{
 			"status":  status,
 			"message": "IM系统运行状态",
+			"checks":  checks,
 			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
@@ -216,6 +260,11 @@ func setupBasicRoutes(router *gin.Engine) {
 			"log": gin.H{
 				"level":    cfg.Log.Level,
 				"filename": cfg.Log.Filename,
+			},
+			"redis": gin.H{
+				"host": cfg.Redis.Host,
+				"port": cfg.Redis.Port,
+				"db":   cfg.Redis.DB,
 			},
 		})
 	})

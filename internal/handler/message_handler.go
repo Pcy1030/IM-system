@@ -5,6 +5,7 @@ import (
 
 	"im-system/internal/service"
 	"im-system/pkg/jwt"
+	"im-system/pkg/redis"
 	"im-system/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -213,4 +214,171 @@ func (h *MessageHandler) GetRecentConversations(c *gin.Context) {
 	}
 
 	response.SuccessWithMessage(c, "获取最近对话成功", conversations)
+}
+
+// GetConversationList 获取对话列表（带缓存）
+func (h *MessageHandler) GetConversationList(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 获取限制参数
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 50 {
+		limit = 10
+	}
+
+	// 获取对话列表
+	conversations, err := h.service.GetConversationList(uint(userID), limit)
+	if err != nil {
+		response.InternalError(c, "获取对话列表失败")
+		return
+	}
+
+	// 转换为响应格式
+	var conversationList []gin.H
+	for _, conv := range conversations {
+		conversationList = append(conversationList, gin.H{
+			"user_id":      conv.UserID,
+			"username":     conv.Username,
+			"last_message": conv.LastMessage,
+			"last_time":    conv.LastTime.Format("2006-01-02 15:04:05"),
+			"unread_count": conv.UnreadCount,
+		})
+	}
+
+	response.SuccessWithMessage(c, "获取对话列表成功", gin.H{
+		"conversations": conversationList,
+		"total":         len(conversationList),
+	})
+}
+
+// MarkConversationAsRead 标记整个对话为已读
+func (h *MessageHandler) MarkConversationAsRead(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 获取对方用户ID
+	otherUserIDStr := c.Param("user_id")
+	otherUserID, err := strconv.ParseUint(otherUserIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user_id parameter")
+		return
+	}
+
+	// 标记对话为已读
+	err = h.service.MarkConversationAsRead(uint(userID), uint(otherUserID))
+	if err != nil {
+		response.InternalError(c, "标记对话为已读失败")
+		return
+	}
+
+	response.SuccessWithMessage(c, "标记对话为已读成功", nil)
+}
+
+// MarkAllAsRead 标记所有消息为已读
+func (h *MessageHandler) MarkAllAsRead(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 标记所有消息为已读
+	err = h.service.MarkAllAsRead(uint(userID))
+	if err != nil {
+		response.InternalError(c, "标记所有消息为已读失败")
+		return
+	}
+
+	response.SuccessWithMessage(c, "标记所有消息为已读成功", nil)
+}
+
+// GetOfflineMessages 获取离线消息
+func (h *MessageHandler) GetOfflineMessages(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 获取离线消息
+	offlineMessages, err := redis.GetOfflineMessages(uint(userID), 50)
+	if err != nil {
+		response.InternalError(c, "获取离线消息失败")
+		return
+	}
+
+	// 转换为API格式
+	var messageList []gin.H
+	for _, msg := range offlineMessages {
+		messageList = append(messageList, gin.H{
+			"id":         msg.ID,
+			"sender_id":  msg.SenderID,
+			"content":    msg.Content,
+			"type":       msg.Type,
+			"created_at": msg.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	response.SuccessWithMessage(c, "获取离线消息成功", gin.H{
+		"messages": messageList,
+		"total":    len(messageList),
+	})
+}
+
+// ClearOfflineMessages 清空离线消息
+func (h *MessageHandler) ClearOfflineMessages(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 清空离线消息
+	err = redis.ClearOfflineMessages(uint(userID))
+	if err != nil {
+		response.InternalError(c, "清空离线消息失败")
+		return
+	}
+
+	response.SuccessWithMessage(c, "清空离线消息成功", nil)
+}
+
+// GetOfflineMessageCount 获取离线消息数量
+func (h *MessageHandler) GetOfflineMessageCount(c *gin.Context) {
+	// 获取当前用户ID
+	userIDStr := jwt.GetUserID(c)
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "invalid user ID")
+		return
+	}
+
+	// 获取离线消息数量
+	count, err := redis.GetOfflineMessageCount(uint(userID))
+	if err != nil {
+		response.InternalError(c, "获取离线消息数量失败")
+		return
+	}
+
+	response.SuccessWithMessage(c, "获取离线消息数量成功", gin.H{
+		"count": count,
+	})
 }

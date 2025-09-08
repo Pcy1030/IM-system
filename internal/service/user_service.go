@@ -10,6 +10,7 @@ import (
 	"im-system/internal/repository"
 	"im-system/pkg/jwt"
 	"im-system/pkg/password"
+	"im-system/pkg/redis"
 )
 
 type UserService struct {
@@ -72,6 +73,9 @@ func (s *UserService) Login(identifier, plainPassword string) (*model.User, stri
 	// 登录成功：更新状态为 online，并刷新最近在线时间
 	_ = s.repo.UpdateStatus(u.ID, "online")
 
+	// 更新Redis在线状态
+	_ = redis.SetUserPresence(u.ID, u.Username, "online")
+
 	token, err := s.jwtService.GenerateToken(
 		fmt.Sprintf("%d", u.ID),
 		map[string]interface{}{"username": u.Username},
@@ -84,5 +88,14 @@ func (s *UserService) Login(identifier, plainPassword string) (*model.User, stri
 
 // Logout 登出：将状态置为 offline
 func (s *UserService) Logout(userID uint) error {
-	return s.repo.UpdateStatus(userID, "offline")
+	// 更新数据库状态
+	err := s.repo.UpdateStatus(userID, "offline")
+	if err != nil {
+		return err
+	}
+
+	// 更新Redis在线状态
+	_ = redis.SetUserPresence(userID, "", "offline")
+
+	return nil
 }

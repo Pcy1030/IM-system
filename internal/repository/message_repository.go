@@ -89,6 +89,15 @@ func (r *MessageRepository) GetUnreadCount(userID uint) (int64, error) {
 	return count, err
 }
 
+// GetConversationUnreadCount 获取与特定用户的未读消息数量
+func (r *MessageRepository) GetConversationUnreadCount(userID, otherUserID uint) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.Message{}).
+		Where("receiver_id = ? AND sender_id = ? AND is_read = ?", userID, otherUserID, false).
+		Count(&count).Error
+	return count, err
+}
+
 // DeleteMessage 删除消息（软删除）
 func (r *MessageRepository) DeleteMessage(messageID, userID uint) error {
 	// 只能删除自己发送的消息

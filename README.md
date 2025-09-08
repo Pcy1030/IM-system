@@ -8,7 +8,9 @@
 - **用户管理**: 用户注册、登录、登出、在线状态管理
 - **实时通讯**: 基于 WebSocket 的实时消息推送，支持心跳保活
 - **消息系统**: 私聊消息、消息历史记录、未读消息管理、已读回执
-- **在线状态**: 实时在线/离线状态，自动心跳检测
+- **在线状态**: 实时在线/离线状态，自动心跳检测（Redis 持久化在线状态）
+- **Redis 缓存**: 私聊消息缓存（最近 N 条）、会话列表缓存、未读计数缓存
+- **离线消息**: 离线消息入 Redis（多实例可用），上线自动推送并可查询/清理
 - **安全认证**: JWT 令牌认证，密码加密存储
 - **配置管理**: YAML 配置文件，支持环境变量覆盖
 - **日志系统**: 完整的日志记录和错误追踪
@@ -24,11 +26,13 @@
 - **认证**: JWT
 - **日志**: Zap + Lumberjack
 - **配置管理**: YAML
+ - **缓存/队列**: Redis（go-redis v9）
 
 ## 📋 系统要求
 
 - Go 1.24.1 或更高版本
 - MySQL 8.0 或更高版本
+ - Redis 6.0 或更高版本（本地或远程）
 - Git
 
 ## 🚀 快速开始
@@ -48,7 +52,7 @@ cd IM-system
 cp config/env.example config/config.yaml
 ```
 
-编辑 `config/config.yaml` 文件，配置数据库连接信息：
+编辑 `config/config.yaml` 文件，配置数据库、Redis 与缓存信息：
 
 ```yaml
 server:
@@ -83,6 +87,18 @@ log:
 websocket:
   pingInterval: "30s"    # 服务器发送 ping 的间隔
   readTimeout: "90s"     # 读超时时间（未收到任何数据则断开）
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""           # 如无密码留空
+  db: 0
+
+cache:
+  enabled: true
+  messageTTL: "1h"        # 消息/会话缓存 TTL
+  maxCachedMessages: 30    # 每个会话缓存最近 N 条
+  maxCachedConversations: 10 # 最近会话列表数量
 ```
 
 ### 环境变量配置（可选）
@@ -111,6 +127,18 @@ export JWT_ISSUER=im-system
 # WebSocket配置
 export WS_PING_INTERVAL=30s
 export WS_READ_TIMEOUT=90s
+
+# Redis 配置
+export REDIS_HOST=127.0.0.1
+export REDIS_PORT=6379
+export REDIS_PASSWORD=
+export REDIS_DB=0
+
+# 缓存配置
+export CACHE_ENABLED=true
+export CACHE_MESSAGE_TTL=1h
+export CACHE_MAX_CACHED_MESSAGES=30
+export CACHE_MAX_CACHED_CONVERSATIONS=10
 ```
 
 ### 3. 创建数据库

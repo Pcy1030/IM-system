@@ -16,6 +16,7 @@ type Config struct {
 	Log       LogConfig       `yaml:"log"`
 	Redis     RedisConfig     `yaml:"redis"`
 	WebSocket WebSocketConfig `yaml:"websocket"`
+	Cache     CacheConfig     `yaml:"cache"`
 }
 
 // ServerConfig 服务器配置
@@ -68,6 +69,14 @@ type RedisConfig struct {
 type WebSocketConfig struct {
 	PingInterval time.Duration `yaml:"pingInterval"` // 发送ping的间隔
 	ReadTimeout  time.Duration `yaml:"readTimeout"`  // 读超时时间（未收到任何数据则断开）
+}
+
+// CacheConfig 缓存配置
+type CacheConfig struct {
+	Enabled                bool          `yaml:"enabled"`                // 是否启用缓存
+	MessageTTL             time.Duration `yaml:"messageTTL"`             // 消息缓存TTL
+	MaxCachedMessages      int           `yaml:"maxCachedMessages"`      // 最大缓存消息数
+	MaxCachedConversations int           `yaml:"maxCachedConversations"` // 最大缓存对话数
 }
 
 // LoadConfig 加载配置（混合方式：YAML文件 + 环境变量）
@@ -191,6 +200,17 @@ func overrideWithEnvVars(config *Config) {
 	if d := getEnvDuration("WS_READ_TIMEOUT", 0); d > 0 {
 		config.WebSocket.ReadTimeout = d
 	}
+
+	// 缓存配置
+	if d := getEnvDuration("CACHE_MESSAGE_TTL", 0); d > 0 {
+		config.Cache.MessageTTL = d
+	}
+	if max := getEnvInt("CACHE_MAX_MESSAGES", 0); max > 0 {
+		config.Cache.MaxCachedMessages = max
+	}
+	if max := getEnvInt("CACHE_MAX_CONVERSATIONS", 0); max > 0 {
+		config.Cache.MaxCachedConversations = max
+	}
 }
 
 // getDefaultConfig 获取默认配置
@@ -229,12 +249,18 @@ func getDefaultConfig() *Config {
 		Redis: RedisConfig{
 			Host:     "localhost",
 			Port:     6379,
-			Password: "",
+			Password: "123456123456",
 			DB:       0,
 		},
 		WebSocket: WebSocketConfig{
 			PingInterval: 30 * time.Second,
 			ReadTimeout:  90 * time.Second,
+		},
+		Cache: CacheConfig{
+			Enabled:                true,
+			MessageTTL:             1 * time.Hour,
+			MaxCachedMessages:      30,
+			MaxCachedConversations: 10,
 		},
 	}
 }
